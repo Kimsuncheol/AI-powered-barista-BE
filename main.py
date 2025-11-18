@@ -5,9 +5,13 @@ from fastapi import FastAPI
 from app.api.routes.ai import router as ai_router
 from app.api.routes.admin_users import router as admin_users_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.cart import router as cart_router
 from app.api.routes.menu_admin import router as menu_admin_router
 from app.api.routes.menu_public import router as menu_public_router
+from app.api.routes.orders import router as orders_router
+from app.api.routes.payments import router as payments_router
 from app.api.routes.profile import router as profile_router
+from app.api.routes.recommendations import router as recommendations_router
 
 app = FastAPI(title="AI-Powered Barista API")
 
@@ -17,6 +21,10 @@ app.include_router(menu_admin_router)
 app.include_router(menu_public_router)
 app.include_router(profile_router)
 app.include_router(ai_router)
+app.include_router(recommendations_router)
+app.include_router(cart_router)
+app.include_router(orders_router)
+app.include_router(payments_router)
 
 
 @app.get("/")

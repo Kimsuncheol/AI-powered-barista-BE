@@ -2,6 +2,8 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.order import Order
+from app.models.preference import Preference
 from app.models.user import User
 from app.schemas.user import RoleUpdate, UserUpdate
 
@@ -35,3 +37,26 @@ def update_user_role(db: Session, user: User, role_in: RoleUpdate) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+def list_user_orders(db: Session, user_id: int) -> List[Order]:
+    """Return orders for the given user sorted by recency."""
+
+    return (
+        db.query(Order)
+        .filter(Order.user_id == user_id)
+        .order_by(Order.created_at.desc())
+        .all()
+    )
+
+
+def get_or_create_preferences(db: Session, user_id: int) -> Preference:
+    """Fetch the user's preferences, creating defaults if necessary."""
+
+    preference = db.query(Preference).filter(Preference.user_id == user_id).first()
+    if not preference:
+        preference = Preference(user_id=user_id)
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
+    return preference
