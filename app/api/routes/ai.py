@@ -1,18 +1,26 @@
 """AI related API routes."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user, get_db
+from app.api.deps import (
+    get_current_active_user,
+    get_current_active_user_optional,
+    get_db,
+)
 from app.models.user import User
 from app.schemas.ai_assistant import (
     AIOrderAssistantRequest,
     AIOrderAssistantResponse,
 )
+from app.schemas.ai_chatbot import ChatbotRequest, ChatbotResponse
 from app.services.ai_assistant_service import (
     InvalidAISuggestionError,
     run_ai_order_assistant,
 )
+from app.services.ai_chatbot_service import handle_chatbot_request
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
@@ -47,3 +55,25 @@ def ai_order_assistant(
         suggestedItems=result.suggestedItems,
         conversationId=req.conversationId,
     )
+
+
+@router.post("/chatbot", response_model=ChatbotResponse)
+def chatbot_endpoint(
+    body: ChatbotRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_active_user_optional),
+) -> ChatbotResponse:
+    """
+    Floating chatbot endpoint (FR-BE-23) handling conversational coffee assistance.
+    """
+
+    if current_user is not None:
+        body.userId = current_user.id
+
+    try:
+        return handle_chatbot_request(db, body)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc

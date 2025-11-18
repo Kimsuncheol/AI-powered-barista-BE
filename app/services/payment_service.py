@@ -1,5 +1,6 @@
 """Service layer for PayPal payments."""
 
+import logging
 from decimal import Decimal
 from typing import Tuple
 
@@ -10,6 +11,8 @@ from app.core.config import settings
 from app.models.order import Order, OrderStatus
 from app.services.order_service import get_order_by_id, update_order_status
 
+logger = logging.getLogger(__name__)
+
 
 class OrderPaymentError(Exception):
     """Raised when payment flow encounters a business rule violation."""
@@ -18,20 +21,35 @@ class OrderPaymentError(Exception):
 class PayPalAPIError(Exception):
     """Raised when PayPal APIs respond with an error."""
 
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
 
 PAYPAL_CURRENCY = "USD"  # TODO: support multiple currencies per tenant.
+
+
+def _http_post(*args, **kwargs):
+    """Wrapper to centralize transient error detection (# RELIABILITY)."""
+
+    try:
+        response = httpx.post(*args, **kwargs)
+        return response
+    except httpx.RequestError as exc:  # pragma: no cover - network guard
+        logger.warning("PayPal network error: %s", exc)
+        raise PayPalAPIError("TRANSIENT_ERROR", retryable=True) from exc
 
 
 def _get_paypal_access_token() -> str:
     """Retrieve an OAuth token from PayPal."""
 
-    resp = httpx.post(
+    resp = _http_post(
         f"{settings.PAYPAL_BASE_URL}/v1/oauth2/token",
         auth=(settings.PAYPAL_CLIENT_ID, settings.PAYPAL_CLIENT_SECRET),
         data={"grant_type": "client_credentials"},
     )
     if resp.status_code != 200:
-        raise PayPalAPIError("Failed to obtain PayPal access token")
+        raise PayPalAPIError("Failed to obtain PayPal access token", retryable=resp.status_code >= 500)
     return resp.json()["access_token"]
 
 
@@ -72,13 +90,13 @@ def create_paypal_order(db: Session, order_id: int, user_id: int) -> Tuple[str, 
         "Content-Type": "application/json",
     }
 
-    resp = httpx.post(
+    resp = _http_post(
         f"{settings.PAYPAL_BASE_URL}/v2/checkout/orders",
         headers=headers,
         json=payload,
     )
     if resp.status_code not in (200, 201):
-        raise PayPalAPIError(f"PayPal create order failed: {resp.text}")
+        raise PayPalAPIError("PayPal create order failed", retryable=resp.status_code >= 500)
 
     data = resp.json()
     paypal_order_id = data["id"]
@@ -106,7 +124,7 @@ def _cancel_order_due_to_payment(
     db.commit()
     # TODO: allow system/staff user context for automated status updates.
     update_order_status(db, order.id, new_status=OrderStatus.CANCELED, staff_user_id=order.user_id)
-    raise PayPalAPIError(message)
+    raise PayPalAPIError(message, retryable=False)
 
 
 def capture_paypal_order(
@@ -129,14 +147,15 @@ def capture_paypal_order(
         "Content-Type": "application/json",
     }
 
-    resp = httpx.post(
+    resp = _http_post(
         f"{settings.PAYPAL_BASE_URL}/v2/checkout/orders/{paypal_order_id}/capture",
         headers=headers,
     )
-
+    if resp.status_code >= 500:
+        raise PayPalAPIError("TRANSIENT_ERROR", retryable=True)
     data = resp.json()
     if resp.status_code not in (200, 201):
-        _cancel_order_due_to_payment(db, order, "FAILED", f"PayPal capture failed: {data}")
+        _cancel_order_due_to_payment(db, order, "FAILED", "PayPal capture failed")
 
     status = data.get("status", "")
     if status != "COMPLETED":

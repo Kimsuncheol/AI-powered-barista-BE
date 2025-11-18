@@ -1,12 +1,14 @@
 from datetime import date
 from typing import Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.menu import MenuItem, OptionGroup, OptionItem
 from app.schemas.menu import MenuItemCreate, MenuItemUpdate, OptionGroupCreate
 
 
+MAX_PAGE_SIZE = 50
+# NFR-BE-4 Scalability: simple per-process cache – replace with Redis/central cache when scaling horizontally.
 _menu_cache: Dict[str, Optional[object]] = {"date": None, "item_ids": None}
 
 
@@ -153,8 +155,18 @@ def delete_menu_item(db: Session, item_id: int) -> None:
     _invalidate_menu_cache()
 
 
-def list_all_menu_items(db: Session) -> List[MenuItem]:
-    return db.query(MenuItem).order_by(MenuItem.created_at.desc()).all()
+def list_all_menu_items(db: Session, limit: int = 20, offset: int = 0) -> List[MenuItem]:
+    """Return menu items for admin views with pagination (# NFR-BE-1 Performance)."""
+
+    normalized_limit = max(1, min(limit, MAX_PAGE_SIZE))
+    query = (
+        db.query(MenuItem)
+        .options(selectinload(MenuItem.option_groups).selectinload(OptionGroup.options))
+        .order_by(MenuItem.created_at.desc())
+        .offset(max(0, offset))
+        .limit(normalized_limit)
+    )
+    return query.all()
 
 
 def _cache_hit(today: date) -> Optional[List[int]]:
@@ -163,21 +175,33 @@ def _cache_hit(today: date) -> Optional[List[int]]:
     return None
 
 
-def list_visible_menu_items(db: Session) -> List[MenuItem]:
+def list_visible_menu_items(
+    db: Session,
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> List[MenuItem]:
     today = date.today()
     cached_ids = _cache_hit(today)
     if cached_ids is not None:
         if not cached_ids:
             return []
-        return (
+        query = (
             db.query(MenuItem)
+            .options(selectinload(MenuItem.option_groups).selectinload(OptionGroup.options))
             .filter(MenuItem.id.in_(cached_ids))
-            .order_by(MenuItem.created_at.desc())
-            .all()
         )
+        items_by_id = {item.id: item for item in query.all()}
+        ordered_items = [items_by_id[item_id] for item_id in cached_ids if item_id in items_by_id]
+        if limit is None:
+            return ordered_items
+        normalized_limit = max(1, min(limit, MAX_PAGE_SIZE))
+        start = max(0, offset)
+        end = start + normalized_limit
+        return ordered_items[start:end]
 
     available_items = (
         db.query(MenuItem)
+        .options(selectinload(MenuItem.option_groups).selectinload(OptionGroup.options))
         .filter(MenuItem.is_available == True)
         .order_by(MenuItem.created_at.desc())
         .all()
@@ -186,4 +210,9 @@ def list_visible_menu_items(db: Session) -> List[MenuItem]:
     _menu_cache["date"] = today
     _menu_cache["item_ids"] = [item.id for item in visible]
     # TODO: replace this in-memory cache with Redis or shared cache when scaling.
-    return visible
+    if limit is None:
+        return visible
+    normalized_limit = max(1, min(limit, MAX_PAGE_SIZE))
+    start = max(0, offset)
+    end = start + normalized_limit
+    return visible[start:end]

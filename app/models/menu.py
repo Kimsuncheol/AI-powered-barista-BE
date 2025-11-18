@@ -33,13 +33,14 @@ class MenuItem(Base):
     name = Column(String(255), nullable=False)
     description = Column(String(1000), nullable=True)
     price = Column(Numeric(10, 2), nullable=False)
-    category = Column(Enum(MenuCategory), nullable=False, default=MenuCategory.OTHER)
+    category = Column(Enum(MenuCategory), nullable=False, default=MenuCategory.OTHER, index=True)
     tags = Column(JSON, nullable=True)
     is_seasonal = Column(Boolean, nullable=False, default=False)
     season_start = Column(Date, nullable=True)
     season_end = Column(Date, nullable=True)
-    is_available = Column(Boolean, nullable=False, default=True)
+    is_available = Column(Boolean, nullable=False, default=True, index=True)
     stock_quantity = Column(Integer, nullable=True)
+    image_url = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -54,7 +55,7 @@ class MenuItem(Base):
         lazy="selectin",
     )
 
-    # TODO: add Alembic migration for menu_items along with option groups/items.
+    # TODO: add Alembic migration for menu_items along with option groups/items (including image_url and indexes).
 
 
 class OptionGroup(Base):

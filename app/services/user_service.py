@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.order import Order
 from app.models.preference import Preference
@@ -44,6 +44,7 @@ def list_user_orders(db: Session, user_id: int) -> List[Order]:
 
     return (
         db.query(Order)
+        .options(selectinload(Order.items))
         .filter(Order.user_id == user_id)
         .order_by(Order.created_at.desc())
         .all()

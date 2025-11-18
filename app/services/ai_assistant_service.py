@@ -1,5 +1,6 @@
 """Service orchestration for the AI ordering assistant."""
 
+import logging
 from typing import List, Optional
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -11,6 +12,9 @@ from app.models.menu import MenuItem
 from app.schemas.ai_assistant import AIOrderAssistantRequest, AIOrderAssistantResult
 from app.services.cart_service import add_items_to_cart
 from app.services.menu_service import list_visible_menu_items
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvalidAISuggestionError(Exception):
@@ -132,6 +136,16 @@ def _validate_ai_suggestions(result: AIOrderAssistantResult, visible_items: List
                     )
 
 
+def _fallback_assistant_response() -> AIOrderAssistantResult:
+    """Return a safe fallback when AI is unavailable (# RELIABILITY)."""
+
+    return AIOrderAssistantResult(
+        action="NONE",
+        replyText="AI is temporarily unavailable. Please continue ordering manually.",
+        suggestedItems=[],
+    )
+
+
 def run_ai_order_assistant(
     db: Session,
     req: AIOrderAssistantRequest,
@@ -151,16 +165,25 @@ def run_ai_order_assistant(
     )
     chain = prompt | llm | parser
 
-    result: AIOrderAssistantResult = chain.invoke(
-        {
-            "menu_context": menu_context,
-            "conversation_context": conversation_context or "(no prior context)",
-            "user_message": req.userMessage,
-            "format_instructions": parser.get_format_instructions(),
-        }
-    )
+    try:
+        result: AIOrderAssistantResult = chain.invoke(
+            {
+                "menu_context": menu_context,
+                "conversation_context": conversation_context or "(no prior context)",
+                "user_message": req.userMessage,
+                "format_instructions": parser.get_format_instructions(),
+            }
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("AI assistant call failed: %s", exc)
+        # RELIABILITY: AI failure → fallback to manual guidance.
+        return _fallback_assistant_response()
 
-    _validate_ai_suggestions(result, visible_items)
+    try:
+        _validate_ai_suggestions(result, visible_items)
+    except InvalidAISuggestionError as exc:
+        logger.warning("Invalid AI suggestion: %s", exc)
+        return _fallback_assistant_response()
 
     if result.action == "ADD_TO_CART" and resolved_user_id is not None:
         add_items_to_cart(db, user_id=resolved_user_id, suggestions=result.suggestedItems)

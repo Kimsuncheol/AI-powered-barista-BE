@@ -21,9 +21,9 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.PENDING)
+    status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.PENDING, index=True)
     total_amount = Column(Numeric(10, 2), nullable=False, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -49,7 +49,7 @@ class Order(Base):
         lazy="selectin",
     )
 
-    # TODO: add Alembic migration for orders/order_items/status_history tables and payment columns.
+    # TODO: add Alembic migration for orders/order_items/status_history tables and payment columns (indexes on status/created_at).
 
 
 class OrderItem(Base):

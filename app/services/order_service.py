@@ -1,15 +1,20 @@
 """Service layer for cart checkout and order management."""
 
+import asyncio
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Tuple
 
-from sqlalchemy.orm import Session
+from anyio import from_thread
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.cart import CartItem
 from app.models.menu import MenuItem
 from app.models.order import Order, OrderItem, OrderStatus, OrderStatusHistory
 from app.schemas.order import OrderCreateFromCart
+from app.schemas.order_tracking import OrderStatusEvent
 from app.services.cart_service import clear_cart, get_cart_items_for_user
+from app.services.order_tracking_service import order_ws_manager
 
 
 class EmptyCartError(Exception):
@@ -29,6 +34,7 @@ def list_orders_for_user(db: Session, user_id: int) -> List[Order]:
 
     return (
         db.query(Order)
+        .options(selectinload(Order.items))
         .filter(Order.user_id == user_id)
         .order_by(Order.created_at.desc())
         .all()
@@ -135,6 +141,22 @@ def update_order_status(
 
     db.commit()
     db.refresh(order)
+
+    event = OrderStatusEvent(
+        orderId=order.id,
+        status=order.status,
+        time=datetime.now(timezone.utc),
+    )
+
+    try:
+        from_thread.run(order_ws_manager.broadcast_status, event)
+    except RuntimeError:
+        loop = asyncio.get_running_loop()
+        loop.create_task(order_ws_manager.broadcast_status(event))
+    except Exception:
+        # TODO: log broadcast failures
+        pass
+
     return order
 
 

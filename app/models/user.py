@@ -20,8 +20,8 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     name = Column(String(255), nullable=False)
     phone = Column(String(50), nullable=True)
-    role = Column(Enum(UserRole), nullable=False, default=UserRole.CUSTOMER)
-    is_active = Column(Boolean, default=True, nullable=False)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.CUSTOMER, index=True)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),
@@ -29,5 +29,4 @@ class User(Base):
         onupdate=func.now(),
     )
 
-    # TODO: add relationships to Order and Preference once those models are fleshed out.
-    # TODO: create an Alembic migration for this schema when ready to persist.
+    # TODO: create an Alembic migration to ensure indexes on email/role/is_active exist.

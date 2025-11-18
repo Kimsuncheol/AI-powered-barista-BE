@@ -1,5 +1,7 @@
 """Recommendation engine orchestration using LangChain."""
 
+import logging
+import random
 from typing import List, Tuple
 
 from langchain_core.output_parsers import PydanticOutputParser
@@ -18,6 +20,9 @@ from app.schemas.recommendation import (
 )
 from app.services.menu_service import list_visible_menu_items
 from app.services.user_service import get_or_create_preferences, list_user_orders
+
+
+logger = logging.getLogger(__name__)
 
 
 class RecommendationAIError(Exception):
@@ -207,14 +212,35 @@ def get_recommendations_for_user(
                 "format_instructions": parser.get_format_instructions(),
             }
         )
+        validated_items = _validate_and_clip_recommendations(ai_result, menu_items, limit)
+        return RecommendationsResponse(items=validated_items)
     except Exception as exc:  # pragma: no cover - defensive guard
-        # TODO: Log exception details (Sentry, OpenTelemetry) and consider caching fallback recommendations.
-        raise RecommendationAIError("AI recommendation generation failed.") from exc
+        logger.warning("AI recommendations unavailable: %s", exc)
+        # RELIABILITY: AI failure → fallback to heuristic suggestions.
+        fallback_items = _fallback_recommendations(menu_items, limit)
+        return RecommendationsResponse(items=fallback_items)
 
-    validated_items = _validate_and_clip_recommendations(ai_result, menu_items, limit)
-    return RecommendationsResponse(items=validated_items)
+
+def _fallback_recommendations(menu_items: List[MenuItem], limit: int) -> List[RecommendationItem]:
+    """Provide a deterministic fallback when AI is down."""
+
+    if not menu_items:
+        return []
+
+    seasonal = [item for item in menu_items if item.is_seasonal]
+    pool = seasonal[:] if seasonal else menu_items[:]
+    random.shuffle(pool)
+    selected = pool[: min(limit, len(pool))]
+    return [
+        RecommendationItem(
+            itemId=item.id,
+            score=0.5,
+            reason="Recommended while AI is offline.",
+        )
+        for item in selected
+    ]
 
 
 # TODO: Cache recommendations per user to avoid repeated LLM calls when preferences/history unchanged.
-# TODO: Provide deterministic fallback recommendations when AI is unavailable.
+# RELIABILITY: AI failure → fallback to manual / heuristic suggestions.
 # TODO: Unit tests to cover history vs. no-history users, invalid AI IDs, and score clamping/sorting behavior.

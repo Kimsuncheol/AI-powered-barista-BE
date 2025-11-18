@@ -95,6 +95,7 @@ class MenuItemOut(MenuItemBase):
     created_at: datetime
     updated_at: datetime
     option_groups: List[OptionGroupOut] = Field(default_factory=list)
+    image_url: Optional[str] = None
 
     class Config:
         orm_mode = True
